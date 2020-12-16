@@ -5,8 +5,21 @@ from sys import argv
 from pathlib import Path
 import time
 
+
+MARGIN_W = 15
+MARGIN_H = 15
+DEBUG = True
 # 칼라 양식지 여부 판단 변수
 IS_COLORED_FORMAT = False
+
+# 이미지의 평균 칼라값(R, G, B)의 합이 675 이상이면 Contrast 적용
+CONTRAST_COLOR_BASE = 675
+
+# 이미지의 평균 색깔 합
+COLOR_AVG_SUM = 0
+
+# 파란색 계열의 픽셀 수가 10개 이상이면 칼라 양식지로 판단함
+COLORED_PIXEL_COUNT = 10
 
 DIRPATH = ""
 FILENAME = ""
@@ -60,32 +73,121 @@ def auto_scan_image(img, type):
     (cnts, _) = cv2.findContours(edged.copy(), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     cnts = sorted(cnts, key = cv2.contourArea, reverse=True)
     original = setUpright(original, cnts[0], r)
+    showIamge("setupright", original)
     t = 1000 / original.shape[1]
     dim = (1000, int(original.shape[0] * t))
     original = cv2.resize(original, dim, interpolation = cv2.INTER_AREA)
+    contrasted = img_Contrast(original)
+    showIamge("con", contrasted)
     haha = original.copy()
     mm = original.copy()
+    
+    global COLOR_AVG_SUM
+    COLOR_AVG_SUM = getColorAvgSum(original)
+    print(f"COLOR_AVG_SUM : {COLOR_AVG_SUM}")
+    # --------------------------------------------------------------------------------------
+
+    # 2-1. 평균 칼라 값이 기준치 이상으로 밝은 경우 Contrast 상향 조정 ---------------------------------
+    if COLOR_AVG_SUM > CONTRAST_COLOR_BASE:
+        original = setContrastUp(original)
 
     # 4. 이미지 이진화 ------------------------------------------------------------------------
     original = toBinary(original)
+    contrasted = toBinary(contrasted)
+    showIamge("tobinary", original)
+    #showIamge("tobinary2", contrasted)
     # --------------------------------------------------------------------------------------
     
     # 5. 이미지 내 표(직선) 없애기 ---------------------------------------------------------------
-    haha = coloringLine(original, haha)
+    haha = coloringLine(contrasted, haha)
+    ht, wh, _ = haha.shape
+    blank = np.zeros((ht,wh,3), np.uint8)
     ww = toBinary(haha)
+    showIamge("tobinary2", ww)
+    ww = cv2.bitwise_not(ww)
+    kernel = np.ones((10, 10), np.uint8)
+    ww = cv2.morphologyEx(ww, cv2.MORPH_CLOSE, kernel)
+    showIamge("coloring", ww)
     cnts= cv2.findContours(
         ww, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    uu = cv2.drawContours(original, cnts[0], -1, (0, 255, 0), 1)
+    uu = cv2.drawContours(blank, cnts[0], -1, (0, 255, 0), 1)
+
+    showIamge("blank", uu)
     
     cell_li, img_line = detect_cell(cnts[0],mm)
-    print(cnts)
     
     result = save_cropCell(cell_li,original,"/Users/kimjw/Desktop/ReadPrescription/crop/")
     
     cv2.imwrite(os.path.join(DIRPATH, FILENAME + '_useDetectCell' + EXTENSION), img_line)
     cv2.imwrite(os.path.join(DIRPATH, FILENAME + '_boxbox' + EXTENSION), uu)
+    #cv2.imwrite(os.path.join(DIRPATH, FILENAME + '_detabled' + EXTENSION), detabled)
     
     return FILENAME + '_scanSuccess' + EXTENSION
+
+def img_Contrast(img):
+    # -----Converting image to LAB Color model-----------------------------------
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    # -----Splitting the LAB image to different channels-------------------------
+    l, a, b = cv2.split(lab)
+    # -----Applying CLAHE to L-channel-------------------------------------------
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    cl = clahe.apply(l)
+    # -----Merge the CLAHE enhanced L-channel with the a and b channel-----------
+    limg = cv2.merge((cl, a, b))
+    # -----Converting image from LAB Color model to RGB model--------------------
+    final = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
+    return final
+
+    
+def isColoredFormat(img):
+
+    height, width, channels = img.shape
+    size = height * width
+
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, LOWER_RANGE, UPPER_RANGE)
+    color = cv2.countNonZero(mask)
+    print(f"> Color Count : {color}")
+
+    if color >= COLORED_PIXEL_COUNT:
+        return True
+
+    return False
+    
+def getColorAvgSum(img):
+    avg_colors = np.average(np.average(img, axis=0), axis=0)
+
+    avg = int(avg_colors[0]) + int(avg_colors[1]) + int(avg_colors[2])
+    print(f"Average Color : {avg} = {int(avg_colors[0])} + {int(avg_colors[1])} + {int(avg_colors[2])}")
+
+    return avg
+
+def setContrastUp(input_img, brightness=-64, contrast=64):
+    
+    if brightness != 0:
+        if brightness > 0:
+            shadow = brightness
+            highlight = 255
+        else:
+            shadow = 0
+            highlight = 255 + brightness
+        alpha_b = (highlight - shadow) / 255
+        gamma_b = shadow
+        
+        buf = cv2.addWeighted(input_img, alpha_b, input_img, 0, gamma_b)
+    else:
+        buf = input_img.copy()
+    
+    if contrast != 0:
+        f = 131 * (contrast + 127) / (127 * (131 - contrast))
+        alpha_c = f
+        gamma_c = 127 * (1 - f)
+        
+        buf = cv2.addWeighted(buf, alpha_c, buf, 0, gamma_c)
+
+    showIamge('setContrastUp', buf)
+
+    return buf
 
 def bluring(img):
     kernel = np.ones((5, 5), np.float32)/25
@@ -137,7 +239,6 @@ def coloringLine(orig, colo):
                 if chk >= 28:
                     for t in range(j - chk, j):
                         colo[t, i] = [0, 0, 255]
-                        itq = [t, i]
                 chk = 0
 
     return colo
@@ -174,6 +275,21 @@ def setUpright(image, screenCnt, r):
         return image
 
     rect = order_points(n.reshape(4, 2) / r)
+    
+    for i in range (len(rect)):
+        
+        
+        if i %3 == 0:
+            rect[i][0] = rect[i][0] - MARGIN_H
+        else:
+            rect[i][0] = rect[i][0] + MARGIN_H
+  
+        
+        if i < 2:
+            rect[i][-1] = rect[i][-1] - MARGIN_H
+        else:
+            rect[i][-1] = rect[i][-1] + MARGIN_H
+    
     (topLeft, topRight, bottomRight, bottomLeft) = rect
     print(f"rect {topLeft} {topRight} {bottomRight} {bottomLeft}")
 
@@ -222,6 +338,26 @@ def unsharp_mask(image, kernel_size=(5, 5), sigma=1.0, amount=1.0, threshold=0):
     #showIamge('unsharp_mask', sharpened)
 
     return sharpened
+    
+def deTabling(orig):
+    thresh = cv2.threshold(orig, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+    # Remove horizontal
+    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (20, 1))
+    detected_lines = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, horizontal_kernel, iterations=4)
+    cnts = cv2.findContours(detected_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = cnts[0] if len(cnts) == 2 else cnts[1]
+    for c in cnts:
+        cv2.drawContours(orig, [c], -1, (255, 255, 255), 3)
+
+    # Remove vertical
+    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 20))
+    detected_lines = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, vertical_kernel, iterations=4)
+    cnts = cv2.findContours(detected_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = cnts[0] if len(cnts) == 2 else cnts[1]
+    for c in cnts:
+        cv2.drawContours(orig, [c], -1, (255, 255, 255), 3)
+
+    return orig
 
 
 def detect_cell(cnts,img):
@@ -241,10 +377,10 @@ def detect_cell(cnts,img):
         
 
         
-        if area > img_area * 0.8:
-            continue
+        #if area > img_area * 0.8:
+        #    continue
         
-        if area > 200 and h > 18 and w > 8:
+        if h > 10 and w > 10:
         
             
             rect = cv2.minAreaRect(cnt)
@@ -252,22 +388,24 @@ def detect_cell(cnts,img):
             point = order_points(box_point)
             
             # 삐뚤어진 이미지 제거
-            if 8 < abs(point[0][1] - point[1][1]):
-           
-                continue
+            #if 8 < abs(point[0][1] - point[1][1]):
+            #    print(f"> {cnt} : 삐뚫어짐")
+            #    continue
             
             if len(box_point) <4 :
-                
+                print(f"> {cnt} : 4개 미만")
                 print(len(box_point))
                 continue
                 
             cell_li.append([x,y,w,h])
             cv2.drawContours(image_copy,[box_point.astype(int)],0,(255,0,0),1)
-    
+
     return cell_li , image_copy
 
 def save_cropCell(cell,ori_img,save_path):
-
+    
+    
+    
     save_path = os.path.join(save_path, 'IMG_')
         
     w,h = ori_img.shape

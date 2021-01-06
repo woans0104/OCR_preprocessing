@@ -29,8 +29,8 @@ LOG_INDEX = 0
 
 #########################################################################################################################################
 #@route('/cvt/<fileName>/<type>')
-def index(fileName, type):
-    return auto_scan_image(FILENAME, type)
+def index(fileName):
+    return auto_scan_image(FILENAME)
 
 def showIamge(title, img):
     if DEBUG:
@@ -41,7 +41,7 @@ def showIamge(title, img):
         cv2.imshow(title, img)
         cv2.waitKey()
 
-def auto_scan_image(img, type):
+def auto_scan_image(img):
     global DIRPATH, FILENAME, EXTENSION
     DIRPATH = os.path.dirname(img)
     temp = os.path.basename(img)
@@ -66,19 +66,20 @@ def auto_scan_image(img, type):
     edged = cv2.Canny(gray, 40, 200)
     
     # 윤곽선 진하게 만드는 코드
-    kernel = np.ones((5, 5), np.uint8)
-    edged = cv2.dilate(edged, kernel, iterations = 3)
-    edged = cv2.erode(edged, kernel, iterations = 3)
+    #kernel = np.ones((5, 5), np.uint8)
+    #edged = cv2.dilate(edged, kernel, iterations = 3)
+    #edged = cv2.erode(edged, kernel, iterations = 3)
+    #showIamge("edged", edged)
     
     (cnts, _) = cv2.findContours(edged.copy(), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     cnts = sorted(cnts, key = cv2.contourArea, reverse=True)
     original = setUpright(original, cnts[0], r)
-    showIamge("setupright", original)
+    #showIamge("setupright", original)
     t = 1000 / original.shape[1]
     dim = (1000, int(original.shape[0] * t))
     original = cv2.resize(original, dim, interpolation = cv2.INTER_AREA)
     contrasted = img_Contrast(original)
-    showIamge("con", contrasted)
+    #showIamge("con", contrasted)
     haha = original.copy()
     mm = original.copy()
     
@@ -94,7 +95,7 @@ def auto_scan_image(img, type):
     # 4. 이미지 이진화 ------------------------------------------------------------------------
     original = toBinary(original)
     contrasted = toBinary(contrasted)
-    showIamge("tobinary", original)
+    #showIamge("tobinary", original)
     #showIamge("tobinary2", contrasted)
     # --------------------------------------------------------------------------------------
     
@@ -103,20 +104,21 @@ def auto_scan_image(img, type):
     ht, wh, _ = haha.shape
     blank = np.zeros((ht,wh,3), np.uint8)
     ww = toBinary(haha)
-    showIamge("tobinary2", ww)
+    #showIamge("tobinary2", ww)
     ww = cv2.bitwise_not(ww)
     kernel = np.ones((10, 10), np.uint8)
     ww = cv2.morphologyEx(ww, cv2.MORPH_CLOSE, kernel)
-    showIamge("coloring", ww)
+    #showIamge("coloring", ww)
     cnts= cv2.findContours(
         ww, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     uu = cv2.drawContours(blank, cnts[0], -1, (0, 255, 0), 1)
 
-    showIamge("blank", uu)
+    #showIamge("blank", uu)
     
     cell_li, img_line = detect_cell(cnts[0],mm)
+    os.makedirs(DIRPATH + "/crop/" + FILENAME)
     
-    result = save_cropCell(cell_li,original,"/Users/kimjw/Desktop/ReadPrescription/crop/")
+    result = save_cropCell(cell_li,original,DIRPATH + "/crop/" + FILENAME + "/")
     
     cv2.imwrite(os.path.join(DIRPATH, FILENAME + '_useDetectCell' + EXTENSION), img_line)
     cv2.imwrite(os.path.join(DIRPATH, FILENAME + '_boxbox' + EXTENSION), uu)
@@ -204,7 +206,7 @@ def order_points(pts):
     rect[3] = pts[np.argmax(diff)]
     return rect
 
-def deNoising(orig, type):
+def deNoising(orig):
     thresh = cv2.threshold(orig, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
     cnts = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cnts = cnts[0] if len(cnts) == 2 else cnts[1]
@@ -426,9 +428,9 @@ def save_cropCell(cell,ori_img,save_path):
     
     return masked
 
-t, img, type = argv
+t, img = argv
 
 if __name__ == '__main__':
     start = time.time()
-    auto_scan_image(img, type)
+    auto_scan_image(img)
     print("time :", time.time() - start)
